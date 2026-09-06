@@ -1,29 +1,39 @@
 import { ChunkManager } from '../voxel/ChunkManager';
 import { BlockRegistry } from '../voxel/BlockRegistry';
-import { WorldGenerator } from './WorldGenerator';
+import { TerrainGenerator } from './TerrainGenerator';
+import { StructureGenerator } from './StructureGenerator';
+import { CaveGenerator } from './CaveGenerator';
+import { WeatherSystem } from './WeatherSystem';
 import { Chunk, ChunkCoords } from '../voxel/Chunk';
 import { Logger } from '../utils/Logger';
-import * as THREE from 'three';
 
 const logger = new Logger('World');
 
 export class World {
   private blockRegistry: BlockRegistry;
   private chunkManager: ChunkManager;
-  private worldGenerator: WorldGenerator;
+  private terrainGenerator: TerrainGenerator;
+  private structureGenerator: StructureGenerator;
+  private caveGenerator: CaveGenerator;
+  private weatherSystem: WeatherSystem;
   private seed: number = Math.floor(Math.random() * 2147483647);
   private lastPlayerChunkPos: ChunkCoords = { x: 0, z: 0 };
   private meshingQueue: Set<string> = new Set();
   private loadedChunks: Set<string> = new Set();
+  private generatingChunks: Set<string> = new Set();
 
   constructor(seed?: number) {
     this.blockRegistry = new BlockRegistry();
     this.chunkManager = new ChunkManager(this.blockRegistry);
-    this.worldGenerator = new WorldGenerator(seed || this.seed);
-
+    
     if (seed) {
       this.seed = seed;
     }
+    
+    this.terrainGenerator = new TerrainGenerator(this.seed);
+    this.structureGenerator = new StructureGenerator(this.seed);
+    this.caveGenerator = new CaveGenerator(this.seed);
+    this.weatherSystem = new WeatherSystem(this.seed);
   }
 
   public async init(): Promise<void> {
@@ -33,6 +43,9 @@ export class World {
   }
 
   public update(playerChunkPos: ChunkCoords, deltaTime: number): void {
+    // Update weather
+    this.weatherSystem.update(deltaTime);
+
     // Check if player moved to a different chunk
     if (
       playerChunkPos.x !== this.lastPlayerChunkPos.x ||
@@ -46,7 +59,7 @@ export class World {
 
     // Process meshing queue (limited per frame)
     let meshesThisFrame = 0;
-    const maxMeshesPerFrame = 2;
+    const maxMeshesPerFrame = 3;
 
     for (const key of this.meshingQueue) {
       if (meshesThisFrame >= maxMeshesPerFrame) break;
@@ -79,10 +92,13 @@ export class World {
     for (let x = centerX - range; x <= centerX + range; x++) {
       for (let z = centerZ - range; z <= centerZ + range; z++) {
         const key = this.chunkManager.getChunkKey(x, z);
-        if (!this.loadedChunks.has(key)) {
+        if (!this.loadedChunks.has(key) && !this.generatingChunks.has(key)) {
+          this.generatingChunks.add(key);
           const chunk = this.chunkManager.getOrCreateChunk(x, z);
-          this.worldGenerator.generateChunk(chunk);
+          this.terrainGenerator.generateChunk(chunk);
+          this.caveGenerator.generateCaves(chunk);
           this.loadedChunks.add(key);
+          this.generatingChunks.delete(key);
           this.meshingQueue.add(key);
         }
       }
@@ -144,6 +160,10 @@ export class World {
 
   public getSeed(): number {
     return this.seed;
+  }
+
+  public getWeather(): any {
+    return this.weatherSystem.getWeather();
   }
 
   public save(): void {
